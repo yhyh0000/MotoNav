@@ -2048,6 +2048,17 @@ void animateCat() {
 int page = 0;                               // 0 = 导航 / 首页，1 = 天气，2 = 音乐
 unsigned long pageAt = 0;
 
+// 1.85B has two physical buttons: BOOT (GPIO0) and PWR. PWR is a hardware
+// power-latch key and must remain untouched. BOOT is sampled only after normal
+// startup, with a short press cycling pages while navigation is running.
+constexpr int BOOT_BUTTON_PIN = 0;
+constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
+constexpr uint32_t BOOT_SHORT_PRESS_MAX_MS = 800;
+bool bootButtonRaw = true;
+bool bootButtonStable = true;
+uint32_t bootButtonChangedAt = 0;
+uint32_t bootButtonPressedAt = 0;
+
 // 页面顺序对应滑动位置：音乐在左，主页居中，天气在右；导航主页不显示。
 void drawPageDots() {
   if (page == 0 && inNav) return;
@@ -2860,6 +2871,45 @@ void slideCancel() {
   else if (inNav) navDirty = true;
   else { onWaitScreen = true; catForce = true; }
   needFlush = true;
+}
+
+void slideAnimate(float p0, float p1, int ms);
+
+// BOOT short press cycles the same three pages as the touch swipe. This keeps
+// PWR entirely hardware-owned and does not affect download-mode sampling at
+// reset because the GPIO is configured only from setup().
+void cyclePageFromBoot() {
+  if (callOn || pairOn || sliding || dragging) return;
+  const int target = (page + 1) % 3;
+  if (!slidePrepare(target)) {
+    page = target;
+    pageAt = millis();
+    renderPage(page);
+    needFlush = true;
+    return;
+  }
+  dragHoriz = true;
+  dragSign = target == 1 ? -1 : 1;
+  dragTarget = target;
+  slideAnimate(0, LCD_WIDTH, 210);
+  slideCommit();
+}
+
+void bootButtonTick() {
+  const bool raw = digitalRead(BOOT_BUTTON_PIN) != LOW;
+  const uint32_t now = millis();
+  if (raw != bootButtonRaw) { bootButtonRaw = raw; bootButtonChangedAt = now; }
+  if (raw == bootButtonStable || now - bootButtonChangedAt < BOOT_DEBOUNCE_MS) return;
+  bootButtonStable = raw;
+  if (!bootButtonStable) {
+    bootButtonPressedAt = now;
+    return;
+  }
+  const uint32_t held = now - bootButtonPressedAt;
+  if (held >= BOOT_DEBOUNCE_MS && held <= BOOT_SHORT_PRESS_MAX_MS) {
+    Serial.printf("BOOT short press: page %d -> %d\n", page, (page + 1) % 3);
+    cyclePageFromBoot();
+  }
 }
 
 // 从 p0 顺势滑到 p1（先快后慢）；ms = 时长
@@ -9222,6 +9272,11 @@ void setup() {
   rtc_gpio_deinit((gpio_num_t)LCD_BL);
   pinMode(LCD_BL,OUTPUT);digitalWrite(LCD_BL,LOW);
   backlightPWM=ledcAttach(LCD_BL,20000,8);
+  // BOOT shares GPIO0 with the ROM downloader at reset. Configure it only
+  // after boot; a short press is a page selector, PWR remains untouched.
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  bootButtonRaw = bootButtonStable = digitalRead(BOOT_BUTTON_PIN) != LOW;
+  bootButtonChangedAt = millis();
   Wire.begin(IIC_SDA, IIC_SCL);
   touchInit();                                         // v5.2 触摸屏
   batInit();                                           // v6.8 电源芯片（电量）
@@ -9449,6 +9504,7 @@ void loop() {
   if (mapNow) navDirty = true;
 
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
+  bootButtonTick();                                    // 1.85B BOOT short press: nav → weather → music
   batPoll();                                           // v6.8 电量
   // 4. 需要时重画导航画面
   // v6.5 配对：整屏显示配对码，配好 / 失败 / 60 秒 / 断开后回到原来的画面
