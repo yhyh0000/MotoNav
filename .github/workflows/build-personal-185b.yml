@@ -48,9 +48,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK packages
-        run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # ubuntu-latest already carries Android SDK 35 and build-tools 35.0.0.
+      # setup-android currently invokes the removed legacy `sdkmanager tools`
+      # package on this runner image, so use its installed SDK directly.
+      - name: Verify Android SDK packages
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
       - name: Create personal signing identity
         working-directory: android
         run: |
