@@ -73,7 +73,7 @@ jobs:
       - name: Verify and stage APK
         run: |
           mkdir -p output
-          apksigner verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
           cp android/app/build/outputs/apk/release/app-release.apk output/MotoNav-personal.apk
           printf 'Package: %s\n' "$APP_ID" > output/Application-info.txt
           sha256sum output/MotoNav-personal.apk > output/MotoNav-personal.apk.sha256
