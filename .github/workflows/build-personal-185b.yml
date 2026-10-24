@@ -1,0 +1,79 @@
+name: Build personal MotoNav 1.85B + Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "firmware/boards/185b/**"
+      - "firmware/libraries/**"
+      - "firmware/build.ps1"
+      - "android/**"
+      - ".github/workflows/build-personal-185b.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  firmware-185b:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Arduino CLI
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://downloads.arduino.cc/arduino-cli/arduino-cli_1.5.1_Windows_64bit.zip -OutFile arduino-cli.zip
+          Expand-Archive arduino-cli.zip -DestinationPath .tools/arduino-cli -Force
+          .tools/arduino-cli/arduino-cli.exe config init --config-file arduino-cli.yaml
+          .tools/arduino-cli/arduino-cli.exe core update-index --config-file arduino-cli.yaml
+          .tools/arduino-cli/arduino-cli.exe core install esp32:esp32@3.3.10 --config-file arduino-cli.yaml
+      - name: Build Waveshare 1.85B panel variant 2
+        shell: pwsh
+        run: |
+          ./firmware/build.ps1 -Board 185b -PanelVariant 2 -CliPath "$PWD/.tools/arduino-cli/arduino-cli.exe" -ConfigFile "$PWD/arduino-cli.yaml" -Jobs 4
+      - name: Upload 1.85B firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotoNav-1.85B-panel2
+          path: firmware/dist/185b/panel2/*
+          if-no-files-found: error
+
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Create personal signing identity
+        working-directory: android
+        run: |
+          APP_ID="com.motonav.u$(cat /proc/sys/kernel/random/uuid | tr -d '-')"
+          echo "personalApplicationId=$APP_ID" > personal.properties
+          mkdir -p keystore
+          PASS=$(openssl rand -hex 32)
+          keytool -genkeypair -storetype JKS -keystore keystore/personal.jks -storepass "$PASS" -keypass "$PASS" -alias motonav -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=MotoNav Personal,O=MotoNav,C=CN"
+          printf 'storeFile=personal.jks\nstorePassword=%s\nkeyAlias=motonav\nkeyPassword=%s\n' "$PASS" "$PASS" > keystore/keystore.properties
+          echo "APP_ID=$APP_ID" >> "$GITHUB_ENV"
+      - name: Build signed personal Android APK
+        working-directory: android
+        run: ./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process -PpersonalApplicationId="$APP_ID" assembleRelease
+      - name: Verify and stage APK
+        run: |
+          mkdir -p output
+          apksigner verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
+          cp android/app/build/outputs/apk/release/app-release.apk output/MotoNav-personal.apk
+          printf 'Package: %s\n' "$APP_ID" > output/Application-info.txt
+          sha256sum output/MotoNav-personal.apk > output/MotoNav-personal.apk.sha256
+      - name: Upload personal Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotoNav-personal-Android-APK
+          path: output/*
+          if-no-files-found: error
