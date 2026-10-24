@@ -49,8 +49,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       # ubuntu-latest already carries Android SDK 35 and build-tools 35.0.0.
-      # setup-android currently invokes the removed legacy `sdkmanager tools`
-      # package on this runner image, so use its installed SDK directly.
+      # setup-android invokes the removed legacy `sdkmanager tools` package on
+      # this runner image, so use the preinstalled SDK directly.
       - name: Verify Android SDK packages
         run: |
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
@@ -67,7 +67,9 @@ jobs:
           echo "APP_ID=$APP_ID" >> "$GITHUB_ENV"
       - name: Build signed personal Android APK
         working-directory: android
-        run: ./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process -PpersonalApplicationId="$APP_ID" assembleRelease
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process -PpersonalApplicationId="$APP_ID" assembleRelease
       - name: Verify and stage APK
         run: |
           mkdir -p output
